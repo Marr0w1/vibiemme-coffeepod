@@ -16,36 +16,36 @@ button = machine.Pin(14, machine.Pin.IN, machine.Pin.PULL_DOWN)
 i2c = I2C(id=0,scl=Pin(9),sda=Pin(8),freq=100000)
 lcd = I2cLcd(i2c, 0x27, 2, 16)
 
-#function called when we pull an espresso shot. Displays a countdown and activates the led/relay for the time set.
-def pull():
-    print("Lighting for " + str(shot))
-    seconds = shot
-    lcd.clear()
-    led_external.on()
+#this is the 'default' function/state that should always be running, waiting for a button press.
+def sleeping():
     while True:
-        if seconds > 0:
-            stringseconds=str(seconds)
-            lcd.move_to(0,0)
-            lcd.putstr("Brewing Now!")
-            lcd.move_to(8,1)
-            lcd.putstr(stringseconds)
-            utime.sleep(1)
-            seconds = seconds - 1
-        else:
-            print("pullcleanup")
-            cleanup()
+        global volt
+        global shot
+        volt = (potentiometer.read_u16() * conversion_factor)#Convert the sampled data to voltage value
+        shot=int(volt)
+        msg=(str("Shot = ") + str(shot) + str(" sec"))
+        lcd.move_to(0,1)
+        lcd.putstr(msg)
+        lcd.clear()
+        lcd.backlight_off()
+        if button.value() == 0:
+            print("Going to ready")
+            utime.sleep(.2)
+            return()
 
 #function called when we press the button once. Wakes the display from 'sleep mode', displays current set shot time, and if pressed again will pull a shot.
-def wakeup():
+def ready():
     print("Waking up ")
-    utime.sleep(.2)
-    seconds = 10
+    utime.sleep(.5)
+    seconds = 5
     lcd.clear()
     lcd.backlight_on()
     while True:
         if button.value() == 0:
-            print("second press")
-            pull()
+            utime.sleep(.5)
+            print("second press, going to Brewing")
+            state="brewing"
+            brewing()
         if seconds > 0:
             lcd.move_to(0,0)
             lcd.putstr('Ready to Brew ')
@@ -59,10 +59,34 @@ def wakeup():
             utime.sleep(1)
             seconds = seconds - 1
         else:
-            print("wakeupcleanup")
+            print("going back to sleep")
+            return()
+
+#function called when we pull an espresso shot. Displays a countdown and activates the led/relay for the time set.
+def brewing():
+    print("Brewing for " + str(shot))
+    seconds = shot
+    lcd.clear()
+    led_external.on()
+    utime.sleep(.5)
+    while True:
+        if button.value() == 0:
+            print("third press, aborting Brewing")
+            state="cleanup"
             cleanup()
-          
-#the other functions resolve to this, in order to ensure the displays and relays are set to a clean/safe state, before returning to Ready state.
+        if seconds > 0:
+            stringseconds=str(seconds)
+            lcd.move_to(0,0)
+            lcd.putstr("Brewing Now!")
+            lcd.move_to(8,1)
+            lcd.putstr(stringseconds)
+            utime.sleep(1)
+            seconds = seconds - 1
+        else:
+            print("Brewing Done")
+            return()
+
+#the other functions resolve to this, in order to ensure the displays and relays are set to a clean/safe state, before returning to Ready state.         
 def cleanup():
     print("cleaning up")
     lcd.clear()
@@ -73,22 +97,8 @@ def cleanup():
     lcd.clear()
     lcd.backlight_off()
     print("all done")
-    ready()
-
-#this is the 'default' function/state that should always be running, waiting for a button press.
-def ready():
-    while True:
-        global volt
-        global shot
-        volt = (potentiometer.read_u16() * conversion_factor)#Convert the sampled data to voltage value
-        shot=int(volt)
-        msg=(str("Shot = ") + str(shot) + str(" sec"))
-        lcd.clear()
-        lcd.backlight_off()
-        if button.value() == 0:
-            print("First press")
-            utime.sleep(.2)
-            wakeup()
+    return()
+    
 
 #Code starts here, initialises custom logo (only needs to be done once) then calls the Ready function.
 lcd.custom_char(1, bytearray([0x08,
@@ -107,4 +117,19 @@ lcd.custom_char(0, bytearray([0x04,
   0x0F,
   0x0F,
   0x07]))        
-ready()
+state = "sleeping"
+#Iterates though various states to make it easier to track what it is currently doing.
+while True:
+    if state == "sleeping":
+        sleeping()
+        state = "ready"
+    elif state == "ready":
+        ready()
+        state = "cleanup"
+    elif state == "brewing":
+        brewing()
+        state = "cleanup"
+    elif state == "cleanup":
+        cleanup()
+        state = "sleeping"
+
